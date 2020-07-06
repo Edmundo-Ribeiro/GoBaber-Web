@@ -168,11 +168,12 @@ export const Appointment = styled.div`
   }
 
   span {
+    width: 70px;
     margin-left: auto;
     display: flex;
     align-items: center;
     color: #f4ede8;
-
+    font-size: 16px;
     svg {
       margin-right: 8px;
       color: #ff9000;

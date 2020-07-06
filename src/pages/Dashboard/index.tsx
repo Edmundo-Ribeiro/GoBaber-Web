@@ -1,8 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { FiPower, FiClock } from 'react-icons/fi';
 import DayPicker, { DayModifiers } from 'react-day-picker';
-import logo from '../../assets/logo.svg';
 import 'react-day-picker/lib/style.css';
+import { isToday, format, isWeekend, isAfter } from 'date-fns';
+import ptBR from 'date-fns/locale/pt-BR';
+import { parseISO } from 'date-fns/esm';
+import logo from '../../assets/logo.svg';
 
 import {
   Profile,
@@ -24,6 +27,21 @@ interface MonthAvailabilityItem {
   available: boolean;
 }
 
+interface Appointment {
+  id: string;
+  date: string;
+  formattedHour: string;
+  provider: {
+    name: string;
+    avatar_url: string;
+  };
+}
+
+interface Schedule {
+  morning: Appointment[];
+  afternoon: Appointment[];
+}
+
 const Dashboard: React.FC = () => {
   const { signOut, user } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -31,9 +49,10 @@ const Dashboard: React.FC = () => {
   const [monthAvailability, setMonthAvailability] = useState<
     MonthAvailabilityItem[]
   >([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
 
   const handleDateChange = useCallback((day: Date, modifiers: DayModifiers) => {
-    if (modifiers.available) {
+    if (modifiers.available && !modifiers.disabled) {
       setSelectedDate(day);
     }
   }, []);
@@ -43,12 +62,6 @@ const Dashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    console.log(`/providers/${user.id}/month-availability`, {
-      params: {
-        year: currentMonth.getFullYear(),
-        month: currentMonth.getMonth() + 1,
-      },
-    });
     api
       .get(`/providers/${user.id}/month-availability`, {
         params: {
@@ -61,6 +74,24 @@ const Dashboard: React.FC = () => {
       });
   }, [currentMonth, user.id]);
 
+  useEffect(() => {
+    api
+      .get<Appointment[]>('/appointments/me', {
+        params: {
+          day: selectedDate.getDate(),
+          month: selectedDate.getMonth() + 1,
+          year: selectedDate.getFullYear(),
+        },
+      })
+      .then(response => {
+        const adaptedAppointments = response.data.map(appointment => ({
+          ...appointment,
+          formattedHour: format(parseISO(appointment.date), 'HH:mm'),
+        }));
+        setAppointments(adaptedAppointments);
+      });
+  }, [selectedDate]);
+
   const disableDays = useMemo(() => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
@@ -71,6 +102,38 @@ const Dashboard: React.FC = () => {
       return disableDaysACC;
     }, []);
   }, [currentMonth, monthAvailability]);
+
+  const formattedDay = useMemo(() => {
+    return format(selectedDate, "'Dia' dd 'de' MMMM", {
+      locale: ptBR,
+    });
+  }, [selectedDate]);
+
+  const nextAppointment = useMemo(() => {
+    return appointments.find(appointment =>
+      isAfter(parseISO(appointment.date), new Date()),
+    );
+  }, [appointments]);
+
+  const dayOfWeek = useMemo(() => {
+    return (
+      format(selectedDate, 'cccc', {
+        locale: ptBR,
+      }) + (isWeekend(selectedDate) ? '' : '-feira')
+    );
+  }, [selectedDate]);
+
+  const appointmentsSchedule = useMemo(() => {
+    return appointments.reduce(
+      (schedule: Schedule, appointment) => {
+        parseISO(appointment.date).getHours() < 12
+          ? schedule.morning.push(appointment)
+          : schedule.afternoon.push(appointment);
+        return schedule;
+      },
+      { morning: [], afternoon: [] },
+    );
+  }, [appointments]);
 
   return (
     <Container>
@@ -99,94 +162,80 @@ const Dashboard: React.FC = () => {
         <Schedule>
           <h1>Horários agendados</h1>
           <p>
-            <span>Hoje</span>
-            <span>Dia 06</span>
-            <span>Segunda-feira</span>
+            {isToday(selectedDate) && <span>Hoje</span>}
+            <span>{formattedDay}</span>
+            <span>{dayOfWeek}</span>
           </p>
 
-          <NextAppointment>
-            <strong>Atendimento a seguir</strong>
-            <div>
-              <img
-                src="https://avatars2.githubusercontent.com/u/39229918?s=460&u=4766e610368f8b05b6779515ab3e81eacb7ca5fa&v=4"
-                alt="Edmundo Ribeiro"
-              />
-              <strong>Edmundo Ribeiro</strong>
-              <span>
-                <FiClock />
-                08:00
-              </span>
-            </div>
-          </NextAppointment>
+          {isToday(selectedDate) && nextAppointment && (
+            <NextAppointment>
+              <strong>Agendamento a seguir</strong>
+              <div>
+                {nextAppointment.provider.avatar_url && (
+                  <img
+                    src={nextAppointment.provider.avatar_url}
+                    alt={nextAppointment.provider.name}
+                  />
+                )}
+                <strong>{nextAppointment.provider.name}</strong>
+                <span>
+                  <FiClock />
+                  {nextAppointment.formattedHour}
+                </span>
+              </div>
+            </NextAppointment>
+          )}
           <Section>
             <strong>Manhã</strong>
+            {appointmentsSchedule.morning.length === 0 && (
+              <p>Não há agendamentos para esse período</p>
+            )}
 
-            <Appointment>
-              <span>
-                <FiClock />
-                08:00
-              </span>
+            {appointmentsSchedule.morning.map(morningAppointment => (
+              <Appointment key={morningAppointment.id}>
+                <span>
+                  <FiClock />
+                  {morningAppointment.formattedHour}
+                </span>
 
-              <div>
-                <img
-                  src="https://avatars2.githubusercontent.com/u/39229918?s=460&u=4766e610368f8b05b6779515ab3e81eacb7ca5fa&v=4"
-                  alt="Edmundo Ribeiro"
-                />
+                <div>
+                  {morningAppointment.provider.avatar_url && (
+                    <img
+                      src={morningAppointment.provider.avatar_url}
+                      alt={morningAppointment.provider.name}
+                    />
+                  )}
 
-                <strong>Edmundo Ribeiro</strong>
-              </div>
-            </Appointment>
-            <Appointment>
-              <span>
-                <FiClock />
-                08:00
-              </span>
-
-              <div>
-                <img
-                  src="https://avatars2.githubusercontent.com/u/39229918?s=460&u=4766e610368f8b05b6779515ab3e81eacb7ca5fa&v=4"
-                  alt="Edmundo Ribeiro"
-                />
-
-                <strong>Edmundo Ribeiro</strong>
-              </div>
-            </Appointment>
-
-            <Appointment>
-              <span>
-                <FiClock />
-                08:00
-              </span>
-
-              <div>
-                <img
-                  src="https://avatars2.githubusercontent.com/u/39229918?s=460&u=4766e610368f8b05b6779515ab3e81eacb7ca5fa&v=4"
-                  alt="Edmundo Ribeiro"
-                />
-
-                <strong>Edmundo Ribeiro</strong>
-              </div>
-            </Appointment>
+                  <strong>{morningAppointment.provider.name}</strong>
+                </div>
+              </Appointment>
+            ))}
           </Section>
 
           <Section>
             <strong>Tarde</strong>
+            {appointmentsSchedule.afternoon.length === 0 && (
+              <p>Não há agendamentos para esse período</p>
+            )}
+            {appointmentsSchedule.afternoon.map(afternoonAppointment => (
+              <Appointment key={afternoonAppointment.id}>
+                <span>
+                  <FiClock />
+                  {afternoonAppointment.formattedHour}
+                </span>
 
-            <Appointment>
-              <span>
-                <FiClock />
-                08:00
-              </span>
+                <div>
+                  {afternoonAppointment.provider.avatar_url && (
+                    <img
+                      src={afternoonAppointment.provider.avatar_url}
+                      alt={afternoonAppointment.provider.name}
+                    />
+                  )}
 
-              <div>
-                <img
-                  src="https://avatars2.githubusercontent.com/u/39229918?s=460&u=4766e610368f8b05b6779515ab3e81eacb7ca5fa&v=4"
-                  alt="Edmundo Ribeiro"
-                />
-
-                <strong>Edmundo Ribeiro</strong>
-              </div>
-            </Appointment>
+                  <strong>{afternoonAppointment.provider.name}</strong>
+                </div>
+              </Appointment>
+            ))}
           </Section>
         </Schedule>
 
